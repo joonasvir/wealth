@@ -3,40 +3,545 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wealth</title>
+  <title>Wealth — the shape of US household wealth</title>
+  <meta name="description" content="A semantic-zoom visualization of US household wealth distribution. From the median household to Elon Musk, in one chart.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
     body {
-      font-family: 'Inter', sans-serif;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #fafafa;
-      color: #111;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #0a0a0a;
+      color: #f5f5f5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
-    .container {
-      text-align: center;
-      padding: 40px;
+    canvas {
+      display: block;
+      cursor: grab;
+      touch-action: none;
     }
-    h1 {
-      font-size: 32px;
+    canvas:active { cursor: grabbing; }
+
+    .hud {
+      position: fixed;
+      top: 32px;
+      left: 32px;
+      max-width: 380px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .hud h1 {
+      font-size: 22px;
       font-weight: 600;
-      margin-bottom: 12px;
+      letter-spacing: -0.01em;
+      margin-bottom: 10px;
     }
-    p {
-      color: #666;
-      font-size: 16px;
+    .hud p {
+      color: rgba(245,245,245,0.65);
+      font-size: 14px;
+      line-height: 1.55;
+      transition: opacity 0.3s ease;
+    }
+    .hud .hint {
+      margin-top: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: rgba(245,245,245,0.35);
+      letter-spacing: 0.02em;
+    }
+
+    .readout {
+      position: fixed;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: rgba(245,245,245,0.4);
+      pointer-events: none;
+      letter-spacing: 0.04em;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .readout span {
+      color: rgba(245,245,245,0.7);
+    }
+
+    .controls {
+      position: fixed;
+      bottom: 32px;
+      right: 32px;
+      display: flex;
+      gap: 8px;
+      z-index: 10;
+    }
+    .controls button {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      color: rgba(245,245,245,0.6);
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 8px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .controls button:hover {
+      color: white;
+      border-color: rgba(255,255,255,0.4);
+      background: rgba(255,255,255,0.08);
+    }
+
+    .sources {
+      position: fixed;
+      bottom: 32px;
+      left: 32px;
+      font-size: 10px;
+      color: rgba(245,245,245,0.3);
+      letter-spacing: 0.02em;
+      max-width: 320px;
+      line-height: 1.5;
+    }
+    .sources a {
+      color: rgba(245,245,245,0.5);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(255,255,255,0.15);
+    }
+    .sources a:hover { color: rgba(245,245,245,0.9); border-color: rgba(255,255,255,0.5); }
+
+    @media (max-width: 640px) {
+      .hud { top: 20px; left: 20px; right: 20px; max-width: none; }
+      .hud h1 { font-size: 18px; }
+      .hud p { font-size: 13px; }
+      .sources { display: none; }
+      .controls { bottom: 20px; right: 20px; }
+      .readout { bottom: 70px; }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Wealth</h1>
-    <p>An interactive zoom into US wealth distribution — from median household to top 0.1%.</p>
+  <canvas id="c"></canvas>
+
+  <div class="hud">
+    <h1>The shape of US household wealth.</h1>
+    <p id="caption">131 million households on this chart, sorted from poorest to richest. The wall on the right is Elon Musk. Every other household is below it.</p>
+    <p class="hint" id="hint">scroll to zoom &middot; drag to pan</p>
   </div>
+
+  <div class="readout" id="readout">
+    viewing <span id="range">$0 — $500B</span> across <span id="xrange">all 131M households</span>
+  </div>
+
+  <div class="controls">
+    <button id="zoom-spike">zoom into the spike</button>
+    <button id="reset">reset</button>
+  </div>
+
+  <div class="sources">
+    Source: Federal Reserve <a href="https://www.federalreserve.gov/releases/efa/efa-distributional-financial-accounts.htm" target="_blank" rel="noopener">DFA</a> &middot; <a href="https://www.federalreserve.gov/econres/scfindex.htm" target="_blank" rel="noopener">SCF 2022</a> &middot; <a href="https://www.forbes.com/forbes-400/" target="_blank" rel="noopener">Forbes 400 (2025)</a>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+
+    // ---------- DATA ----------
+    // Total US households (Census 2024 estimate, rounded).
+    const N = 131_000_000;
+
+    // Percentile thresholds (Federal Reserve SCF 2022 + DFA Q3 2025).
+    const distribution = [
+      { rank: 0,                          wealth: -50_000,         label: 'poorest households (debt)' },
+      { rank: Math.floor(N * 0.10),       wealth: 100,             label: 'bottom 10%' },
+      { rank: Math.floor(N * 0.25),       wealth: 14_000,          label: 'bottom 25%' },
+      { rank: Math.floor(N * 0.50),       wealth: 192_700,         label: 'median household',    big: true },
+      { rank: Math.floor(N * 0.75),       wealth: 659_000,         label: 'top 25%' },
+      { rank: Math.floor(N * 0.90),       wealth: 1_937_000,       label: 'top 10%' },
+      { rank: Math.floor(N * 0.95),       wealth: 3_800_000,       label: 'top 5%' },
+      { rank: Math.floor(N * 0.99),       wealth: 11_600_000,      label: 'top 1%',              big: true },
+      { rank: Math.floor(N * 0.995),      wealth: 22_000_000,      label: 'top 0.5%' },
+      { rank: Math.floor(N * 0.999),      wealth: 60_000_000,      label: 'top 0.1%',            big: true },
+      { rank: Math.floor(N * 0.9999),     wealth: 350_000_000,     label: 'top 0.01%' },
+      { rank: N - 400,                    wealth: 3_300_000_000,   label: 'Forbes 400 floor',    big: true },
+    ];
+
+    // Forbes 400 (2025) — top of list.
+    const forbesTop = [
+      { name: 'Elon Musk',        wealth: 428e9 },
+      { name: 'Larry Ellison',    wealth: 276e9 },
+      { name: 'Mark Zuckerberg',  wealth: 253e9 },
+      { name: 'Jeff Bezos',       wealth: 241e9 },
+      { name: 'Larry Page',       wealth: 172e9 },
+      { name: 'Sergey Brin',      wealth: 162e9 },
+      { name: 'Steve Ballmer',    wealth: 156e9 },
+      { name: 'Warren Buffett',   wealth: 150e9 },
+      { name: 'Jensen Huang',     wealth: 143e9 },
+      { name: 'Michael Dell',     wealth: 124e9 },
+      { name: 'Bill Gates',       wealth: 117e9 },
+    ];
+    forbesTop.sort((a, b) => b.wealth - a.wealth);
+    forbesTop.forEach((b, i) => {
+      b.rank = N - 1 - i;
+      b.label = b.name;
+      b.big = true;
+      b.person = true;
+    });
+
+    const points = [...distribution, ...forbesTop].sort((a, b) => a.rank - b.rank);
+
+    // ---------- VIEW STATE ----------
+    const initialView = { x0: 0, x1: N, y0: -2e10, y1: 5e11 };
+    let view = { ...initialView };
+
+    // ---------- CANVAS ----------
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    let W = 0, H = 0, dpr = 1;
+
+    function resize() {
+      dpr = window.devicePixelRatio || 1;
+      W = window.innerWidth * dpr;
+      H = window.innerHeight * dpr;
+      canvas.width = W;
+      canvas.height = H;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      render();
+    }
+
+    // ---------- TRANSFORMS ----------
+    const sxOf = () => W / (view.x1 - view.x0);
+    const syOf = () => H / (view.y1 - view.y0);
+    const toScreenX = (rank) => (rank - view.x0) * sxOf();
+    const toScreenY = (wealth) => H - (wealth - view.y0) * syOf();
+    const toWorldX = (px) => view.x0 + (px / W) * (view.x1 - view.x0);
+    const toWorldY = (py) => view.y1 - (py / H) * (view.y1 - view.y0);
+
+    // ---------- FORMATTERS ----------
+    function fmtMoney(v) {
+      const s = v < 0 ? '-' : '';
+      const a = Math.abs(v);
+      if (a >= 1e12) return s + '$' + (a/1e12).toFixed(a < 1e13 ? 2 : 1) + 'T';
+      if (a >= 1e9)  return s + '$' + (a/1e9).toFixed(a < 1e10 ? 1 : 0) + 'B';
+      if (a >= 1e6)  return s + '$' + (a/1e6).toFixed(a < 1e7 ? 2 : 0) + 'M';
+      if (a >= 1e3)  return s + '$' + (a/1e3).toFixed(0) + 'K';
+      if (a < 1) return '$0';
+      return s + '$' + Math.round(a).toLocaleString();
+    }
+    function fmtRank(r) {
+      const pct = (r / N) * 100;
+      if (pct < 0.01) return 'household #' + Math.max(1, Math.round(r)).toLocaleString();
+      if (pct < 50) return 'bottom ' + (pct < 1 ? pct.toFixed(2) : pct.toFixed(0)) + '%';
+      if (Math.abs(pct - 50) < 0.5) return 'median';
+      const topPct = 100 - pct;
+      if (topPct >= 1) return 'top ' + topPct.toFixed(0) + '%';
+      if (topPct >= 0.01) return 'top ' + topPct.toFixed(2) + '%';
+      const fromTop = N - r;
+      return '#' + Math.max(1, Math.round(fromTop)) + ' wealthiest';
+    }
+    function fmtRange(lo, hi) {
+      return fmtMoney(lo) + ' — ' + fmtMoney(hi);
+    }
+
+    // ---------- RENDER ----------
+    function render() {
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, W, H);
+
+      // area fill under the curve
+      const gradient = ctx.createLinearGradient(0, 0, 0, H);
+      gradient.addColorStop(0, 'rgba(255,255,255,0.18)');
+      gradient.addColorStop(1, 'rgba(255,255,255,0.04)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.moveTo(toScreenX(view.x0), H);
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        ctx.lineTo(toScreenX(p.rank), toScreenY(p.wealth));
+      }
+      ctx.lineTo(toScreenX(view.x1), H);
+      ctx.closePath();
+      ctx.fill();
+
+      // curve outline
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1, 1.25 * dpr);
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const x = toScreenX(p.rank);
+        const y = toScreenY(p.wealth);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // baseline at $0
+      const yZero = toScreenY(0);
+      if (yZero >= 0 && yZero <= H) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1 * dpr;
+        ctx.setLineDash([4 * dpr, 4 * dpr]);
+        ctx.beginPath();
+        ctx.moveTo(0, yZero);
+        ctx.lineTo(W, yZero);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      drawLabels();
+    }
+
+    function drawLabels() {
+      const isSmall = window.innerWidth < 640;
+      const fontPx = (isSmall ? 10 : 12) * dpr;
+      ctx.font = fontPx + 'px "JetBrains Mono", monospace';
+      ctx.textBaseline = 'middle';
+      const placed = [];
+      const padding = 6 * dpr;
+      const lineH = (isSmall ? 13 : 16) * dpr;
+
+      const sorted = [...points].sort((a, b) => {
+        if (a.big && !b.big) return -1;
+        if (!a.big && b.big) return 1;
+        return b.wealth - a.wealth;
+      });
+
+      const xZoom = N / (view.x1 - view.x0);
+
+      for (const p of sorted) {
+        const x = toScreenX(p.rank);
+        const y = toScreenY(p.wealth);
+        if (x < -50 * dpr || x > W + 50 * dpr) continue;
+        if (y < -50 * dpr || y > H + 50 * dpr) continue;
+        if (!p.big && xZoom < 8) continue;
+
+        const moneyText = fmtMoney(p.wealth);
+        const labelText = p.label;
+        const wMoney = ctx.measureText(moneyText).width;
+        const wLabel = ctx.measureText(labelText).width;
+        const boxW = Math.max(wMoney, wLabel) + 4 * dpr;
+        const boxH = lineH * 2;
+
+        const candidates = [
+          { dx: -10*dpr, dy: -lineH, anchor: 'right', baseY: y - 6*dpr },
+          { dx:  10*dpr, dy: -lineH, anchor: 'left',  baseY: y - 6*dpr },
+          { dx: -10*dpr, dy:  lineH, anchor: 'right', baseY: y + 6*dpr + lineH },
+          { dx:  10*dpr, dy:  lineH, anchor: 'left',  baseY: y + 6*dpr + lineH },
+        ];
+
+        for (const c of candidates) {
+          const bx = c.anchor === 'right' ? x + c.dx - boxW : x + c.dx;
+          const by = c.baseY - boxH + 4 * dpr;
+          let overlaps = false;
+          for (const r of placed) {
+            if (bx < r.x + r.w + padding && bx + boxW + padding > r.x &&
+                by < r.y + r.h + padding && by + boxH + padding > r.y) {
+              overlaps = true; break;
+            }
+          }
+          if (!overlaps && bx >= 4*dpr && bx + boxW <= W - 4*dpr && by >= 4*dpr && by + boxH <= H - 4*dpr) {
+            ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+            ctx.lineWidth = 1 * dpr;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            const tx = c.anchor === 'right' ? bx + boxW : bx;
+            ctx.lineTo(tx, c.baseY - lineH/2);
+            ctx.stroke();
+
+            ctx.fillStyle = p.person ? '#ffd87a' : 'rgba(255,255,255,0.95)';
+            ctx.textAlign = c.anchor;
+            const textX = c.anchor === 'right' ? bx + boxW : bx;
+            ctx.fillText(moneyText, textX, c.baseY - lineH);
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fillText(labelText, textX, c.baseY);
+
+            ctx.fillStyle = p.person ? '#ffd87a' : '#ffffff';
+            ctx.beginPath();
+            ctx.arc(x, y, 3 * dpr, 0, Math.PI * 2);
+            ctx.fill();
+
+            placed.push({ x: bx, y: by, w: boxW, h: boxH });
+            break;
+          }
+        }
+      }
+    }
+
+    // ---------- CAPTIONS ----------
+    function captionFor() {
+      const yMax = view.y1;
+      const xZoom = N / (view.x1 - view.x0);
+
+      if (yMax > 4e11 && xZoom < 2) {
+        return '131 million households on this chart, sorted from poorest to richest. The wall on the right is Elon Musk. Every other household is below it — most are too small to see at this scale.';
+      }
+      if (yMax > 1e11) {
+        return 'You\'ve zoomed in. The "wall" turns out to be the eleven wealthiest Americans — each a colored dot. The flat line below is everyone else, including every doctor, lawyer, and small-business owner in America.';
+      }
+      if (yMax > 1e10) {
+        return 'You\'re viewing the top ~0.0003% of households. The Forbes 400 floor is $3.3 billion. The median American household is still invisible — its wealth is 1/17,000th of one pixel at this scale.';
+      }
+      if (yMax > 1e9) {
+        return 'Below the billionaires now, in centi-millionaire territory. The top 0.01% threshold is $350 million. Median household wealth: $192,700. The slope still looks vertical.';
+      }
+      if (yMax > 1e8) {
+        return 'Top 0.1% threshold: $60 million. Top 1%: $11.6 million. Median: $192,700. Same shape, every zoom level.';
+      }
+      if (yMax > 1e7) {
+        return 'You\'re past the top 1%. The chart still looks like a wall on the right. That wall is the same wall — just zoomed in 50,000×.';
+      }
+      if (yMax > 1e6) {
+        return 'You\'ve zoomed past 99% of Americans. Median household wealth — $192,700 — is finally visible at this scale.';
+      }
+      return 'You\'re in the bottom — most households live here. Median: $192,700. Note that the curve still rises sharply on the right. The shape is fractal: at every zoom level, the gap looks the same.';
+    }
+
+    function updateCaption() {
+      document.getElementById('caption').textContent = captionFor();
+      const rangeEl = document.getElementById('range');
+      const xrangeEl = document.getElementById('xrange');
+      rangeEl.textContent = fmtRange(Math.max(0, view.y0), view.y1);
+      const xLo = Math.max(0, view.x0);
+      const xHi = Math.min(N, view.x1);
+      if (view.x0 <= 0 && view.x1 >= N) {
+        xrangeEl.textContent = 'all 131M households';
+      } else {
+        xrangeEl.textContent = fmtRank(xLo) + ' → ' + fmtRank(xHi);
+      }
+    }
+
+    // ---------- INTERACTION ----------
+    let dragging = false;
+    let lastX = 0, lastY = 0;
+
+    canvas.addEventListener('mousedown', (e) => {
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = (e.clientX - lastX) * dpr;
+      const dy = (e.clientY - lastY) * dpr;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      const wdx = -dx / W * (view.x1 - view.x0);
+      const wdy =  dy / H * (view.y1 - view.y0);
+      view.x0 += wdx;
+      view.x1 += wdx;
+      view.y0 += wdy;
+      view.y1 += wdy;
+      render();
+      updateCaption();
+    });
+    window.addEventListener('mouseup', () => { dragging = false; });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const px = (e.clientX - rect.left) * dpr;
+      const py = (e.clientY - rect.top) * dpr;
+      const wx = toWorldX(px);
+      const wy = toWorldY(py);
+      const factor = e.deltaY > 0 ? 1.15 : 1/1.15;
+
+      const newXrange = (view.x1 - view.x0) * factor;
+      const newYrange = (view.y1 - view.y0) * factor;
+      if (newXrange > N * 1.2 && factor > 1) return;
+      if (newXrange < 0.5 && factor < 1) return;
+      if (newYrange < 1 && factor < 1) return;
+
+      view.x0 = wx - (wx - view.x0) * factor;
+      view.x1 = wx + (view.x1 - wx) * factor;
+      view.y0 = wy - (wy - view.y0) * factor;
+      view.y1 = wy + (view.y1 - wy) * factor;
+      render();
+      updateCaption();
+    }, { passive: false });
+
+    // touch
+    let pinchDist = 0;
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const t = Array.from(e.touches);
+      if (t.length === 2) {
+        const dx = t[0].clientX - t[1].clientX;
+        const dy = t[0].clientY - t[1].clientY;
+        pinchDist = Math.hypot(dx, dy);
+      } else if (t.length === 1) {
+        lastX = t[0].clientX;
+        lastY = t[0].clientY;
+      }
+    }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const t = Array.from(e.touches);
+      if (t.length === 2) {
+        const dx = t[0].clientX - t[1].clientX;
+        const dy = t[0].clientY - t[1].clientY;
+        const newDist = Math.hypot(dx, dy);
+        const factor = pinchDist / Math.max(1, newDist);
+        const cx = (t[0].clientX + t[1].clientX) / 2;
+        const cy = (t[0].clientY + t[1].clientY) / 2;
+        const rect = canvas.getBoundingClientRect();
+        const wx = toWorldX((cx - rect.left) * dpr);
+        const wy = toWorldY((cy - rect.top) * dpr);
+        view.x0 = wx - (wx - view.x0) * factor;
+        view.x1 = wx + (view.x1 - wx) * factor;
+        view.y0 = wy - (wy - view.y0) * factor;
+        view.y1 = wy + (view.y1 - wy) * factor;
+        pinchDist = newDist;
+        render();
+        updateCaption();
+      } else if (t.length === 1) {
+        const dx = (t[0].clientX - lastX) * dpr;
+        const dy = (t[0].clientY - lastY) * dpr;
+        lastX = t[0].clientX;
+        lastY = t[0].clientY;
+        const wdx = -dx / W * (view.x1 - view.x0);
+        const wdy =  dy / H * (view.y1 - view.y0);
+        view.x0 += wdx; view.x1 += wdx; view.y0 += wdy; view.y1 += wdy;
+        render();
+        updateCaption();
+      }
+    }, { passive: false });
+
+    // ---------- ANIMATIONS ----------
+    function animateView(target, duration = 900) {
+      const start = { ...view };
+      const t0 = performance.now();
+      function step(now) {
+        const t = Math.min(1, (now - t0) / duration);
+        const e = t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2;
+        view.x0 = start.x0 + (target.x0 - start.x0) * e;
+        view.x1 = start.x1 + (target.x1 - start.x1) * e;
+        view.y0 = start.y0 + (target.y0 - start.y0) * e;
+        view.y1 = start.y1 + (target.y1 - start.y1) * e;
+        render();
+        updateCaption();
+        if (t < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    document.getElementById('reset').addEventListener('click', () => {
+      animateView(initialView);
+    });
+    document.getElementById('zoom-spike').addEventListener('click', () => {
+      animateView({ x0: N - 25, x1: N + 2, y0: 0, y1: 5e11 });
+    });
+
+    // ---------- BOOT ----------
+    window.addEventListener('resize', resize);
+    resize();
+    updateCaption();
+  })();
+  </script>
 </body>
 </html>
