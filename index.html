@@ -252,18 +252,25 @@
       ctx.fillStyle = '#0a0a0a';
       ctx.fillRect(0, 0, W, H);
 
-      // area fill under the curve
+      // axes (drawn behind everything else)
+      drawAxes();
+
+      // area fill under the curve — drop vertically at the first/last data points
+      // so the polygon doesn't slope down to the canvas corners past Musk.
+      const firstP = points[0];
+      const lastP = points[points.length - 1];
+
       const gradient = ctx.createLinearGradient(0, 0, 0, H);
       gradient.addColorStop(0, 'rgba(255,255,255,0.18)');
       gradient.addColorStop(1, 'rgba(255,255,255,0.04)');
       ctx.fillStyle = gradient;
       ctx.beginPath();
-      ctx.moveTo(toScreenX(view.x0), H);
+      ctx.moveTo(toScreenX(firstP.rank), H);
       for (let i = 0; i < points.length; i++) {
         const p = points[i];
         ctx.lineTo(toScreenX(p.rank), toScreenY(p.wealth));
       }
-      ctx.lineTo(toScreenX(view.x1), H);
+      ctx.lineTo(toScreenX(lastP.rank), H);
       ctx.closePath();
       ctx.fill();
 
@@ -281,20 +288,106 @@
       }
       ctx.stroke();
 
-      // baseline at $0
-      const yZero = toScreenY(0);
-      if (yZero >= 0 && yZero <= H) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      drawLabels();
+    }
+
+    // ---------- AXES ----------
+    function niceTicks(min, max, count) {
+      const range = max - min;
+      if (range <= 0 || !isFinite(range)) return [];
+      const rough = range / count;
+      const exp = Math.floor(Math.log10(rough));
+      const base = Math.pow(10, exp);
+      const norm = rough / base;
+      let step;
+      if (norm < 1.5) step = 1 * base;
+      else if (norm < 3) step = 2 * base;
+      else if (norm < 7) step = 5 * base;
+      else step = 10 * base;
+
+      const ticks = [];
+      const start = Math.ceil(min / step) * step;
+      for (let v = start; v <= max + step * 1e-9; v += step) {
+        ticks.push(v);
+        if (ticks.length > 50) break;
+      }
+      return ticks;
+    }
+
+    function fmtXTick(r) {
+      if (r >= N - 0.5) return '#1';
+      if (r <= 0) return 'poorest';
+      const fromTop = N - r;
+      const pct = (r / N) * 100;
+      if (fromTop < 500) return '#' + Math.max(1, Math.round(fromTop)).toLocaleString();
+      if (pct >= 99.99) return 'top ' + (100 - pct).toFixed(3) + '%';
+      if (pct >= 99.9)  return 'top ' + (100 - pct).toFixed(2) + '%';
+      if (pct >= 99)    return 'top ' + (100 - pct).toFixed(1) + '%';
+      if (pct > 50)     return 'top ' + Math.round(100 - pct) + '%';
+      if (pct === 50)   return 'median';
+      return 'bottom ' + Math.round(pct) + '%';
+    }
+
+    function drawAxes() {
+      const isSmall = window.innerWidth < 640;
+      const fontPx = (isSmall ? 9 : 10) * dpr;
+      ctx.font = fontPx + 'px "JetBrains Mono", monospace';
+
+      const leftPad = (isSmall ? 4 : 8) * dpr;
+      const bottomPad = (isSmall ? 90 : 80) * dpr;
+      const topReserve = 16 * dpr;
+
+      // ---- Y axis (currency) ----
+      const yLo = Math.max(0, view.y0);
+      const yHi = view.y1;
+      const yTicks = niceTicks(yLo, yHi, 6);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      for (const v of yTicks) {
+        const y = toScreenY(v);
+        if (y < topReserve || y > H - bottomPad) continue;
+
+        // gridline
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
         ctx.lineWidth = 1 * dpr;
-        ctx.setLineDash([4 * dpr, 4 * dpr]);
+        ctx.setLineDash([2 * dpr, 4 * dpr]);
         ctx.beginPath();
-        ctx.moveTo(0, yZero);
-        ctx.lineTo(W, yZero);
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
         ctx.stroke();
         ctx.setLineDash([]);
+
+        // label
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.fillText(fmtMoney(v), leftPad, y);
       }
 
-      drawLabels();
+      // ---- X axis (percentile / rank) ----
+      const xLo = Math.max(0, view.x0);
+      const xHi = Math.min(N, view.x1);
+      const xTicks = niceTicks(xLo, xHi, 6);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+
+      for (const r of xTicks) {
+        const x = toScreenX(r);
+        if (x < 60 * dpr || x > W - 20 * dpr) continue;
+
+        // gridline
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.lineWidth = 1 * dpr;
+        ctx.setLineDash([2 * dpr, 4 * dpr]);
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H - bottomPad + 4 * dpr);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // tick label
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.fillText(fmtXTick(r), x, H - bottomPad + 8 * dpr);
+      }
     }
 
     function drawLabels() {
